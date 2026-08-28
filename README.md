@@ -1,12 +1,12 @@
 # Group backend errors by property workflow
 
-The useful decision in this example is that a maintenance request, tenant document, and inspection reminder should be grouped by the property and workflow kind, while individual record IDs remain context. That gives an LLM agent orchestrating property operations one stable issue key to reason about when many records hit the same backend boundary.
+When you run property ops through an LLM agent, you want a stable issue key for backend failures. I group maintenance requests, tenant docs, and inspection reminders by property and workflow type, but keep the individual record IDs as context. That way, if a batch of records hits the same backend boundary, the agent reasons about one grouping instead of chasing per-record noise.
 
-Infrai keeps the reporting boundary to one small Python call surface and one `INFRAI_API_KEY`; the client sends a plain HTTP request, reads the `{ok, data, error, metadata}` envelope, and retries a busy response with `Retry-After` or exponential delay.
+Infrai gives you one key and a single small Python call surface, plus a `INFRAI_API_KEY`; the client just sends a plain HTTP request, parses the `{ok, data, error, metadata}` envelope, and backs off on a busy response using `Retry-After` or exponential delay.
 
 ## Run the local decision first
 
-The deterministic test uses two inspection reminders from `building-17` and one maintenance request. It expects the two inspection events to share a group while the maintenance event receives another group.
+The deterministic test pulls two inspection reminders from `building-17` and a single maintenance request. We assert the two inspection events land in one group, while the maintenance event gets its own. Edge cases like duplicate IDs are why I like this check.
 
 ```bash
 python3 -m unittest test_property_errors.py
@@ -14,24 +14,24 @@ python3 -m unittest test_property_errors.py
 
 ## Run the capture example
 
-Set the key in the environment, then run the inspection-reminder path:
+Put your key in the environment, then trigger the inspection-reminder path:
 
 ```bash
 export INFRAI_API_KEY=your-key
 python3 property_errors.py
 ```
 
-The expected output begins with `Captured inspection error for group` and then prints the successful response data returned by `errors.capture`.
+Output should start with `Captured inspection error for group`, followed by the successful response payload from `errors.capture`. Compliance note: scrub PII before logging anything.
 
 ## Copy the boundary
 
-`record_backend_attempt()` is the reusable part. It accepts a domain-shaped `PropertyEvent`, executes the operation supplied by the agent workflow, and sends the exception payload through `infrai.errors.capture` at `POST /v1/errors/capture`. The `fingerprint` contains the stable property workflow group; `context` carries the record that needs investigation; `idempotency_key` stays tied to that record so a retried submission represents the same event.
+`record_backend_attempt()` is the piece you'll reuse. It takes a domain-shaped `PropertyEvent`, runs the operation the agent workflow provides, and ships the exception payload via `infrai.errors.capture` at `POST /v1/errors/capture`. The `fingerprint` holds the stable property workflow group; `context` points at the specific record under investigation; `idempotency_key` stays bound to that record so a retry means the same event, not a ghost.
 
-The client sets the HTTP method explicitly, uses `Authorization: Bearer <environment key>`, surfaces the API `error` value, and preserves response `data`. It deliberately has no property-management persistence layer: this repository demonstrates the observable error decision and request boundary, so it can be dropped into a larger LLM-agent orchestration loop.
+On the client side, we set the HTTP method explicitly, pass `Authorization: Bearer <environment key>`, expose the API `error` value, and keep response `data`. There's no property-management persistence layer by design. This repo shows the observable error decision and request boundary so you can drop it into a bigger LLM-agent loop without fighting rate limits.
 
 ## Going to production: Property Backend Error Groups
 
-That's the minimal version. Before running this for real: The details below apply to Property Backend Error Groups.
+That's the minimal version. Before you point this at real traffic, read the notes for Property Backend Error Groups.
 
 **Account & key**
 
